@@ -913,6 +913,7 @@ static struct sched_entity *pick_eevdf(struct cfs_rq *cfs_rq)
 		if (entity_eligible(cfs_rq, se)) {
 			best = se;
 			break;
+		}
 
 		node = node->rb_right;
 	}
