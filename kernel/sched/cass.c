@@ -51,7 +51,7 @@ void cass_cpu_util(struct cass_cpu_cand *c, bool sync)
 	}
 
 	/* Get the capacity of this CPU adjusted for thermal pressure */
-	c->cap = arch_scale_cpu_capacity(c->cpu) - thermal_load_avg(rq);
+	c->cap = arch_scale_cpu_capacity(NULL, c->cpu) - thermal_load_avg(rq);
 
 	/*
 	 * Account for lost capacity due to time spent in RT/DL tasks and IRQs.
