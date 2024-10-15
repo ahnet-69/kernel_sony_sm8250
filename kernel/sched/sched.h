@@ -556,54 +556,12 @@ struct cfs_bandwidth { };
 
 #endif	/* CONFIG_CGROUP_SCHED */
 
-/*
- * u64_u32_load/u64_u32_store
- *
- * Use a copy of a u64 value to protect against data race. This is only
- * applicable for 32-bits architectures.
- */
-#ifdef CONFIG_64BIT
-# define u64_u32_load_copy(var, copy)       var
-# define u64_u32_store_copy(var, copy, val) (var = val)
-#else
-# define u64_u32_load_copy(var, copy)					\
-({									\
-	u64 __val, __val_copy;						\
-	do {								\
-		__val_copy = copy;					\
-		/*							\
-		 * paired with u64_u32_store_copy(), ordering access	\
-		 * to var and copy.					\
-		 */							\
-		smp_rmb();						\
-		__val = var;						\
-	} while (__val != __val_copy);					\
-	__val;								\
-})
-# define u64_u32_store_copy(var, copy, val)				\
-do {									\
-	typeof(val) __val = (val);					\
-	var = __val;							\
-	/*								\
-	 * paired with u64_u32_load_copy(), ordering access to var and	\
-	 * copy.							\
-	 */								\
-	smp_wmb();							\
-	copy = __val;							\
-} while (0)
-#endif
-# define u64_u32_load(var)      u64_u32_load_copy(var, var##_copy)
-# define u64_u32_store(var, val) u64_u32_store_copy(var, var##_copy, val)
-
 /* CFS-related fields in a runqueue */
 struct cfs_rq {
 	struct load_weight	load;
 	unsigned long		runnable_weight;
 	unsigned int		nr_running;
 	unsigned int		h_nr_running;
-
-	s64			avg_vruntime;
-	u64			avg_load;
 
 	u64			exec_clock;
 	u64			min_vruntime;
@@ -619,6 +577,8 @@ struct cfs_rq {
 	 */
 	struct sched_entity	*curr;
 	struct sched_entity	*next;
+	struct sched_entity	*last;
+	struct sched_entity	*skip;
 
 #ifdef	CONFIG_SCHED_DEBUG
 	unsigned int		nr_spread_over;
@@ -630,7 +590,7 @@ struct cfs_rq {
 	 */
 	struct sched_avg	avg;
 #ifndef CONFIG_64BIT
-	u64			last_update_time_copy;
+	u64			load_last_update_time_copy;
 #endif
 	struct {
 		raw_spinlock_t	lock ____cacheline_aligned;
@@ -1861,7 +1821,6 @@ extern const u32		sched_prio_to_wmult[40];
 #else
 #define ENQUEUE_MIGRATED	0x00
 #endif
-#define ENQUEUE_INITIAL		0x80
 
 #define RETRY_TASK		((void *)-1UL)
 
@@ -2124,7 +2083,6 @@ extern void check_preempt_curr(struct rq *rq, struct task_struct *p, int flags);
 extern const_debug unsigned int sysctl_sched_nr_migrate;
 extern const_debug unsigned int sysctl_sched_migration_cost;
 
-extern unsigned int sysctl_sched_base_slice;
 #ifdef CONFIG_SCHED_HRTICK
 
 /*
@@ -2493,7 +2451,6 @@ static inline void double_rq_unlock(struct rq *rq1, struct rq *rq2)
 
 #endif
 
-extern struct sched_entity *__pick_root_entity(struct cfs_rq *cfs_rq);
 extern struct sched_entity *__pick_first_entity(struct cfs_rq *cfs_rq);
 extern struct sched_entity *__pick_last_entity(struct cfs_rq *cfs_rq);
 
@@ -3079,7 +3036,6 @@ static inline void restore_cgroup_boost_settings(void) { }
 #endif
 
 extern int alloc_related_thread_groups(void);
-extern int entity_eligible(struct cfs_rq *cfs_rq, struct sched_entity *se);
 
 extern void check_for_migration(struct rq *rq, struct task_struct *p);
 
@@ -3327,5 +3283,3 @@ struct sched_avg_stats {
 	int nr_scaled;
 };
 extern void sched_get_nr_running_avg(struct sched_avg_stats *stats);
-
-extern u64 avg_vruntime(struct cfs_rq *cfs_rq);
