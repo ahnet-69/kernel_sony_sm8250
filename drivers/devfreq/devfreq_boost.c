@@ -8,10 +8,20 @@
 #include <linux/devfreq_boost.h>
 #include <linux/input.h>
 #include <linux/kthread.h>
-#include <linux/msm_drm_notify.h>
 #include <linux/slab.h>
 #include <uapi/linux/sched/types.h>
 #include <drm/drm_panel.h>
+#include "governor.h"
+
+struct drm_ext_event {
+	void *data;
+};
+
+#define DRM_BLANK_UNBLANK	0
+#define DRM_BLANK_POWERDOWN	4
+
+extern int drm_register_client(struct notifier_block *nb);
+extern int drm_unregister_client(struct notifier_block *nb);
 
 enum {
 	SCREEN_OFF,
@@ -143,7 +153,7 @@ static void devfreq_update_boosts(struct boost_dev *b, unsigned long state)
 	struct devfreq *df = b->df;
 
 	mutex_lock(&df->lock);
-	if (!(state & BIT(SCREEN_OFF))) {
+	if (state & BIT(SCREEN_OFF)) {
 		df->min_freq = df->profile->freq_table[0];
 		df->max_boost = false;
 	} else {
@@ -190,17 +200,17 @@ static int msm_drm_notifier_cb(struct notifier_block *nb,
 			       unsigned long action, void *data)
 {
 	struct df_boost_drv *d = container_of(nb, typeof(*d), msm_drm_notif);
-	int i, *blank = ((struct msm_drm_notifier *)data)->data;
+	int i;
+	int *blank = data ? ((struct drm_ext_event *)data)->data : NULL;
 
-	/* Parse DRM blank events as soon as they occur */
-	if (action != MSM_DRM_EARLY_EVENT_BLANK)
+	if (!blank)
 		return NOTIFY_OK;
 
 	/* Boost when the screen turns on and unboost when it turns off */
 	for (i = 0; i < DEVFREQ_MAX; i++) {
 		struct boost_dev *b = &d->devices[i];
 
-		if (*blank == MSM_DRM_BLANK_UNBLANK) {
+		if (*blank == DRM_BLANK_UNBLANK) {
 			clear_bit(SCREEN_OFF, &b->state);
 			__devfreq_boost_kick_max(b,
 				CONFIG_DEVFREQ_WAKE_BOOST_DURATION_MS);
@@ -297,8 +307,6 @@ static struct input_handler devfreq_boost_input_handler = {
 	.id_table	= devfreq_boost_ids
 };
 
-extern struct drm_panel *lcd_active_panel;
-
 static int __init devfreq_boost_init(void)
 {
 	struct df_boost_drv *d = &df_boost_drv_g;
@@ -326,14 +334,10 @@ static int __init devfreq_boost_init(void)
 
 	d->msm_drm_notif.notifier_call = msm_drm_notifier_cb;
 	d->msm_drm_notif.priority = INT_MAX;
-	if (lcd_active_panel) {
-		ret = drm_panel_notifier_register(lcd_active_panel, &d->msm_drm_notif);
-		if (ret) {
-			pr_err("Unable to register msm_drm notifier: %d\n", ret);
-			goto unregister_handler;
-		}
-	} else {
-		pr_err("lcd_active_panel is null\n");
+	ret = drm_register_client(&d->msm_drm_notif);
+	if (ret) {
+		pr_err("Unable to register drm notifier: %d\n", ret);
+		goto unregister_handler;
 	}
 
 	return 0;
